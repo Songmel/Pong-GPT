@@ -11,6 +11,7 @@ import time
 VIDEO_SELECTION = 0  # 0번이 메인 카메라 1번부터 서브 카메라 장치들
 VIDEO_WIDTH = 1000  # 화면 해상도 (1525x853)
 
+abc = 0
 CENTER_LINE = 426
 LINE1_BOX = (0, 0, 1525, CENTER_LINE)
 LINE2_BOX = (0, CENTER_LINE, 1525, 853)
