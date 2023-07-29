@@ -6,12 +6,49 @@ import argparse
 import cv2
 import imutils
 import time
+import socket
+import threading
+
+host = '127.0.0.1'
+port = 10000
+DATA_Y = 0
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind((host, port))
+server.listen()
+print('Service Started.')
+
+clients = []
+
+def handle(client):
+    while True:
+        try:
+            # 클라이언트로부터 타당한 메시지를 받았는지 확인
+            message = '{},250'.format(DATA_Y)
+
+            # 서버가 받은 메시지를 클라이언트 전체에 보내기
+            for client in clients:
+                client.send(message.encode(encoding='utf-8'))
+
+        except:
+            # 클라이언트가 나갔으면 알림
+            index = clients.index(client)
+            clients.remove(client)
+            client.close()
+            break
+
+
+# 멀티 클라이언트를 받는 메서드
+client, address = server.accept()
+print('Connected with {}'.format(str(address)))
+clients.append(client)
+thread = threading.Thread(target=handle, args=(client,))
+
 
 ##### 중요 환경 변수들 #####
 VIDEO_SELECTION = 0  # 0번이 메인 카메라 1번부터 서브 카메라 장치들
 VIDEO_WIDTH = 1000  # 화면 해상도 (1525x853)
 
-abc = 0
 CENTER_LINE = 426
 LINE1_BOX = (0, 0, 1525, CENTER_LINE)
 LINE2_BOX = (0, CENTER_LINE, 1525, 853)
@@ -102,16 +139,13 @@ while True:
 
             # line calculating
             if LINE1_TOGGLE == True and LINE2_TOGGLE == True and line_ison == False:
-                FINAL_XY = (
-                    0,
-                    int(
+                DATA_Y = int(
                         LINE1_XY[1]
                         - (LINE1_XY[0])
                         * (LINE1_XY[1] - LINE2_XY[1])
-                        / (LINE1_XY[0] - LINE2_XY[0])
-                    ),
-                )
+                        / (LINE1_XY[0] - LINE2_XY[0]))
                 line_ison = True
+                thread.start()
                 print("FINAL_XY : ", end="")
                 print(center)
 
