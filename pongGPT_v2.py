@@ -46,7 +46,7 @@ thread = threading.Thread(target=handle, args=(client,))
 
 
 ##### 중요 환경 변수들 #####
-VIDEO_SELECTION = 0  # 0번이 메인 카메라 1번부터 서브 카메라 장치들
+VIDEO_SELECTION = 1  # 0번이 메인 카메라 1번부터 서브 카메라 장치들
 VIDEO_WIDTH = 1000  # 화면 해상도 (1525x853)
 
 CENTER_LINE = 426
@@ -121,8 +121,6 @@ while True:
                 ball_in_2 = False
 
                 LINE1_XY = center
-                print("line1 detect : ", end="")
-                print(center)
 
             # line2
             if ball_in_2 == False and center[1] > CENTER_LINE and center[1] < 853:
@@ -134,8 +132,6 @@ while True:
                 ball_in_2 = True
 
                 LINE2_XY = center
-                print("line2 detect : ", end="")
-                print(center)
 
             # line calculating
             if LINE1_TOGGLE == True and LINE2_TOGGLE == True and line_ison == False:
@@ -145,9 +141,9 @@ while True:
                         * (LINE1_XY[1] - LINE2_XY[1])
                         / (LINE1_XY[0] - LINE2_XY[0]))
                 line_ison = True
-                thread.start()
-                print("FINAL_XY : ", end="")
+                print("Final XY: ")
                 print(center)
+                thread.start()
 
             # reset for next & rally pointing
             if LINE1_TOGGLE == False and LINE2_TOGGLE == False and line_ison == True:
@@ -156,8 +152,6 @@ while True:
                 LINE2_XY = None
                 FINAL_XY = None
                 line_ison = False
-                print("RALLY_COUNT : ", end="")
-                print(RALLY_COUNT)
 
     else:
         ball_in_1 = False
