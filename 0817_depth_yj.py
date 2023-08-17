@@ -8,10 +8,14 @@ import imutils
 import time
 import threading
 import socket
+# First import the library
+import pyrealsense2 as rs
+
 
 print("########### Pong GPT V10 ############")
 
 # TCP/IP 소켓통신
+'''
 host = "127.0.0.1"
 port = 10000
 
@@ -61,7 +65,7 @@ def arm_send(client_arm, fin_eta, fin_angle):
     except:
         client_arm.close()
 
-
+'''
 ##### 중요 환경 변수들 #####
 VIDEO_SELECTION = 2  # 0번부터 카메라 포트 찾아서 1씩 올려보기
 VIDEO_WIDTH = 1000  # 화면 가로 넓이
@@ -71,13 +75,15 @@ NET_LINE = 250  # 네트 라인
 
 CATCH_FRAME = 3 # 좌표 계산 프레임 수
 MIN_GAP = 20 # 최소 감지 속도 (px)
-MOVE_FIX = 0.4 # 최종 좌표 미세 조정
+MOVE_FIX = 0 # 최종 좌표 미세 조정
 HIT_LINE = 750 - 100 # 타격 명령 감지 범위 (px)
 HIT_DELAY = 10 # 감지 이후 타격까지 딜레이 (ms)
 LINE_DEACTIVE_TIME = 0.8 # 감지 비활성화 시간 (sec)
 ACTU_WAIT_TIME = 300 # 엑추에이터 이동 후 대기 시간 (ms)
 
-DEPTH = 1.2
+DEPTH = 1.3
+
+
 
 # 초기화 변수들
 line_on = False
@@ -87,6 +93,32 @@ FINAL_MOVE = 0  # 단위 cm
 # 주황색 탁구공 HSV 색 범위 지정 (창문쪽 형광등 두 개 키고 문쪽 형광등 한 개 껐을때 기준)
 orangeLower = (1, 130, 240)
 orangeUpper = (30, 255, 255)
+
+# Create a pipeline
+pipeline = rs.pipeline()
+# Create a config and configure the pipeline to stream
+#  different resolutions of color and depth streams
+config = rs.config()
+# Get device product line for setting a supporting resolution
+pipeline_wrapper = rs.pipeline_wrapper(pipeline)
+pipeline_profile = config.resolve(pipeline_wrapper)
+device = pipeline_profile.get_device()
+device_product_line = str(device.get_info(rs.camera_info.product_line))
+found_rgb = False
+for s in device.sensors:
+    if s.get_info(rs.camera_info.name) == 'RGB Camera':
+        found_rgb = True
+        break
+if not found_rgb:
+    print("The demo requires Depth camera with Color sensor")
+    exit(0)
+config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+
+if device_product_line == 'L500':
+    config.enable_stream(rs.stream.color, 960, 540, rs.format.bgr8, 30)
+else:
+    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+
 
 # 파서 코딩 부분
 ap = argparse.ArgumentParser()
@@ -115,17 +147,57 @@ def line_activator(ETA):
     print("Line Deactivated / Detecting UNLOCK")
 
 # 비디오 스트리밍 시작
-vs = VideoStream(src=VIDEO_SELECTION).start()
-time.sleep(2.0)
+#vs = VideoStream(src=VIDEO_SELECTION).start()
+#time.sleep(2.0)
+
+# Start streaming
+profile = pipeline.start(config)
+# Getting the depth sensor's depth scale (see rs-align example for explanation)
+depth_sensor = profile.get_device().first_depth_sensor()
+depth_scale = depth_sensor.get_depth_scale()
+print("Depth Scale is: " , depth_scale)
+# We will be removing the background of objects more than
+#  clipping_distance_in_meters meters away
+clipping_distance_in_meters = 1 #1 meter
+clipping_distance = clipping_distance_in_meters / depth_scale
+# Create an align object
+# rs.align allows us to perform alignment of depth frames to others frames
+# The "align_to" is the stream type to which we plan to align depth frames.
+align_to = rs.stream.color
+align = rs.align(align_to)
 
 # 프레임 단위 무한 루프 영역
 while True:
-    frame = vs.read()
-    frame = frame[1] if args.get("video", False) else frame
-    if frame is None:
-        break
+    frames = pipeline.wait_for_frames()
+    # Align the depth frame to color frame
+    aligned_frames = align.process(frames)
+
+    # Get aligned frames
+    aligned_depth_frame = aligned_frames.get_depth_frame() # aligned_depth_frame is a 640x480 depth image
+    color_frame = aligned_frames.get_color_frame()
+
+    # Validate that both frames are valid
+    if not aligned_depth_frame or not color_frame:
+        continue
+
+    depth_image = np.asanyarray(aligned_depth_frame.get_data())
+    color_image = np.asanyarray(color_frame.get_data())
+    
+    grey_color = 153
+    depth_image_3d = np.dstack((depth_image,depth_image,depth_image)) #depth image is 1 channel, color is 3 channels
+    bg_removed = np.where((depth_image_3d > clipping_distance) | (depth_image_3d <= 0), grey_color, color_image)
+
+    # Render images:
+    #   depth align to color on left
+    #   depth on right
+    depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+    images = np.hstack((bg_removed, depth_colormap))
+
+    cv2.namedWindow('Align Example', cv2.WINDOW_NORMAL)
+    cv2.imshow('Align Example', images)
+
     # 화면비 (680x750)
-    frame = imutils.resize(frame, width=VIDEO_WIDTH)
+    frame = imutils.resize(color_image, width=VIDEO_WIDTH)
     frame = frame[0:750, WIDTH_CUT : 1000 - WIDTH_CUT]
     # 영상처리
     blurred = cv2.GaussianBlur(frame, (11, 11), 0)
@@ -146,6 +218,12 @@ while True:
         M = cv2.moments(c)
         center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
 
+        if 0 <= x <= 640 and 0 <= y <= 480:
+            dist = aligned_depth_frame.get_distance(int(x), int(y))
+            dist = round(dist, 4)
+            dist *= 100
+            print(dist)
+
         # 뎁스 알고리즘
         realcenter = [0, 0]
         # x좌표 수정
@@ -164,7 +242,7 @@ while True:
             realcenter[0] = center[0]
 
         # y좌표 수정
-        realcenter[1] = center[1]
+        realcenter[1] = center[1] 
 
 
         # 탁구 알고리즘
@@ -174,7 +252,7 @@ while True:
                 if line_xy[0][1] + MIN_GAP < line_xy[1][1]:
                     temp_move.append(
                         int(
-                            (1000 - line_xy[0][1])
+                            (750 - line_xy[0][1])
                             * (line_xy[0][0] - line_xy[1][0])
                             / (line_xy[0][1] - line_xy[1][1])
                             + line_xy[0][0]
@@ -212,6 +290,7 @@ while True:
             lineact_tr.start()
 
             # 엑추에이터 송신 쓰레드
+            '''
             actu_tr = threading.Thread(
                 target=actu_send,
                 args=(
@@ -221,25 +300,26 @@ while True:
                 ),
             )
             actu_tr.start()
+            '''
 
-
-        # if realcenter[1] > HIT_LINE and line_on == True and hit_on == False:
-        #     if center[1] > 700:
-        #         HIT_DELAY = 1
-        #     else:
-        #         HIT_DELAY = 3
-
-
-            HIT_DELAY = 160
+        
+        if realcenter[1] > HIT_LINE and line_on == True and hit_on == False:
+            if center[1] > 700:
+                HIT_DELAY = 1
+            else:
+                HIT_DELAY = 10
 
             # 로봇팔 송신 쓰레드
+            '''
             arm_tr = threading.Thread(
                 target=arm_send,
                 args=(client_arm, HIT_DELAY, 100),
             )
             arm_tr.start()
+            '''
             hit_on = True
             print("Hit! : {0}".format(realcenter))
+            
 
     # rgb 트레킹 레드라인 코드
     pts.appendleft(realcenter)

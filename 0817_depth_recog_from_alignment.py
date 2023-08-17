@@ -39,7 +39,7 @@ else:
     config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
 ##### 중요 환경 변수들 #####
-VIDEO_SELECTION = 1  # 0번부터 카메라 포트 찾아서 1씩 올려보기
+VIDEO_SELECTION = 2  # 0번부터 카메라 포트 찾아서 1씩 올려보기
 VIDEO_WIDTH = 1000  # 화면 가로 넓이
 WIDTH_CUT = 160
 CENTER_LINE = 340  # 세로 센터 라인
