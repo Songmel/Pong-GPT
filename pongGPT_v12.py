@@ -174,7 +174,7 @@ while True:
                 if line_xy[0][1] + MIN_GAP < line_xy[1][1]:
                     temp_move.append(
                         int(
-                            (1000 - line_xy[0][1])
+                            (1100 - line_xy[0][1])
                             * (line_xy[0][0] - line_xy[1][0])
                             / (line_xy[0][1] - line_xy[1][1])
                             + line_xy[0][0]
@@ -230,7 +230,7 @@ while True:
         #         HIT_DELAY = 3
 
 
-            HIT_DELAY = 160
+            HIT_DELAY = 145
 
             # 로봇팔 송신 쓰레드
             arm_tr = threading.Thread(
