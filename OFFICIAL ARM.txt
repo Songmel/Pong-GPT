@@ -1,0 +1,658 @@
+
+#if defined(__linux__) || defined(__APPLE__)
+#include <fcntl.h>
+#include <termios.h>
+#define STDIN_FILENO 0
+#elif defined(_WIN32) || defined(_WIN64)
+#include <conio.h>
+#endif
+
+#pragma comment(lib, "ws2_32.lib")
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <iostream>
+#include <cstdlib>
+#include <string>
+#include <winsock2.h>
+#include <Windows.h>
+#include <cstring>
+#include "dynamixel_sdk.h"
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define PORT 10000
+#define PI 3.1415
+
+using namespace std;
+
+////////////////////////////////////////////
+// Control table address
+////////////////////////////////////////////
+
+// Control table address for Dynamixel MX protocol 1
+#define ADDR_MX_TORQUE_ENABLE           24                  
+#define ADDR_MX_GOAL_POSITION           30
+#define ADDR_MX_PRESENT_POSITION        36
+#define ADDR_MX_MOVING_SPEED            32
+
+//  Control table address for Dynamixel XM430 
+#define ADDR_XM430_TORQUE_ENABLE          64
+#define ADDR_XM430_GOAL_POSITION          116
+#define ADDR_XM430_PRESENT_POSITION       132
+//#define ADDR_XM430_PROFILE_ACCELERATION   108
+#define ADDR_XM430_PROFILE_VELOCITY       112
+
+// Data Byte Length
+#define LEN_MX_GOAL_POSITION            2
+#define LEN_MX_PRESENT_POSITION         2
+
+////////////////////////////////////////////
+// Protocol version
+////////////////////////////////////////////
+
+#define PROTOCOL_VERSION1               1.0                
+#define PROTOCOL_VERSION2               2.0
+
+////////////////////////////////////////////
+// Default setting 
+////////////////////////////////////////////
+
+#define DXL1_ID                         2                // Dynamixel#1 ID: 2
+#define DXL2_ID                         3                 // Dynamixel#2 ID: 3
+//#define DXL3_ID                         14                   // Dynamixel#3 ID: 14
+#define DXL4_ID                         13                 // Dynamixel#4 ID: 13
+#define BAUDRATE                        57600
+#define DEVICENAME                      "COM4"      // Check which port is being used on your controller
+															// ex) Windows: "COM1"   Linux: "/dev/ttyUSB0" Mac: "/dev/tty.usbserial-*"
+
+#define TORQUE_ENABLE                   1                   // Value for enabling the torque
+#define TORQUE_DISABLE                  0                   // Value for disabling the torque
+
+#define DXL1_MOVING_STATUS_THRESHOLD    10                  // Dynamixel MX#1 moving status threshold 
+#define DXL2_MOVING_STATUS_THRESHOLD    10                  // Dynamixel MX#2 moving status threshold
+#define DXL3_MOVING_STATUS_THRESHOLD    10                  // Dynamixel XM430 moving status threshold
+#define DXL4_MOVING_STATUS_THRESHOLD    10                  // Dynamixel XM430 moving status threshold
+
+#define ESC_ASCII_VALUE                 0x1b
+
+
+void ShowErrorMessage(string message)
+{
+	cout << "Error: " << message << '\n';
+	system("pause");
+	exit(1);
+}
+
+int getch()
+{
+#if defined(__linux__) || defined(__APPLE__)
+	struct termios oldt, newt;
+	int ch;
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	ch = getchar();
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	return ch;
+#elif defined(_WIN32) || defined(_WIN64)
+	return _getch();
+#endif
+}
+
+int kbhit(void)
+{
+#if defined(__linux__) || defined(__APPLE__)
+	struct termios oldt, newt;
+	int ch;
+	int oldf;
+
+	tcgetattr(STDIN_FILENO, &oldt);
+	newt = oldt;
+	newt.c_lflag &= ~(ICANON | ECHO);
+	tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+	oldf = fcntl(STDIN_FILENO, F_GETFL, 0);
+	fcntl(STDIN_FILENO, F_SETFL, oldf | O_NONBLOCK);
+
+	ch = getchar();
+
+	tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
+	fcntl(STDIN_FILENO, F_SETFL, oldf);
+
+	if (ch != EOF)
+	{
+		ungetc(ch, stdin);
+		return 1;
+	}
+
+	return 0;
+#elif defined(_WIN32) || defined(_WIN64)
+	return _kbhit();
+#endif
+}
+
+
+
+
+// Initialize PortHandler instance
+	// Set the port path
+	// Get methods and members of PortHandlerLinux or PortHandlerWindows
+dynamixel::PortHandler* portHandler = dynamixel::PortHandler::getPortHandler(DEVICENAME);
+
+// Initialize PacketHandler instance
+// Set the protocol version
+// Get methods and members of Protocol1PacketHandler or Protocol2PacketHandler
+dynamixel::PacketHandler* packetHandler1 = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION1);
+//dynamixel::PacketHandler* packetHandler3 = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION2);
+dynamixel::PacketHandler* packetHandler4 = dynamixel::PacketHandler::getPacketHandler(PROTOCOL_VERSION2);
+
+// Initialize GroupSyncWrite instance
+dynamixel::GroupSyncWrite groupSyncWrite(portHandler, packetHandler1, ADDR_MX_GOAL_POSITION, LEN_MX_GOAL_POSITION);
+
+int dxl_comm_result = COMM_TX_FAIL;       // Communication result
+
+// position setting
+//
+//
+//
+//
+//
+//
+//front position and back position (all motors)
+int dxl_1_front_pos_deg = 152;  //id 2,3 (mx)  range 0~360 //before: 153
+//int dxl_3_front_pos_deg = 185; //id 14         range 0~360
+int dxl_4_front_pos_deg = 247; //id  13       range 0~360 //before: 247
+
+int dxl_1_back_pos_deg = 181; //id 2, 3  (mx)   range 0~360 //before: 180
+//int dxl_3_back_pos_deg = 140; //id 3          range 0~360
+int dxl_4_back_pos_deg = 247; //id  13        range 0~360  //before:  247
+
+//mapping 360 degree to 4096
+int dxl_1_front_pos = int(dxl_1_front_pos_deg * 11.38);
+int dxl_1_back_pos = int(dxl_1_back_pos_deg * 11.38);
+int dxl_2_front_pos = 2048 + (2048 - dxl_1_front_pos); // #1 and #2 position should be mirroring
+int dxl_2_back_pos = 2048 + (2048 - dxl_1_back_pos);   // #1 and #2 position should be mirroring
+//int dxl_3_front_pos = int(dxl_3_front_pos_deg * 11.38);
+//int dxl_3_back_pos = int(dxl_3_back_pos_deg * 11.38);
+int dxl_4_front_pos = int(dxl_4_front_pos_deg * 11.38);
+int dxl_4_back_pos = int(dxl_4_back_pos_deg * 11.38);
+
+//Goal position setting
+int dxl1_goal_position[2] = { dxl_1_back_pos, dxl_1_front_pos };     // Goal position of Dynamixel 1
+int dxl2_goal_position[2] = { dxl_2_back_pos, dxl_2_front_pos };     // Goal position of Dynamixel 2
+//int dxl3_goal_position[2] = { dxl_3_back_pos, dxl_3_front_pos };     // Goal position of Dynamixel 3
+int dxl4_goal_position[2] = { dxl_4_back_pos, dxl_4_front_pos };     // Goal position of Dynamixel 4
+
+
+
+//Velocity setting
+//
+// 
+// 
+// 
+// all motors velocity
+int dxl1_front_vel = 280;      //range: 0~1023 //p900  //before:  290
+//int dxl3_front_vel = 0;      //range: 0 ~ 32,767 //28000
+int dxl4_front_vel = 0;      //range: 0 ~ 32,767  //before: 0
+
+int dxl1_back_vel = 200;      //range: 0~1023  //before: 200
+//int dxl3_back_vel = 50;      //range: 0 ~ 32,767
+int dxl4_back_vel = 0;      //range: 0 ~ 32,767  //before: 0
+
+int dxl1_vel[2] = { dxl1_back_vel, dxl1_front_vel };
+//int dxl3_vel[2] = { dxl3_back_vel, dxl3_front_vel };
+int dxl4_vel[2] = { dxl4_back_vel, dxl4_front_vel };
+
+//present position variable
+bool dxl_addparam_result = false;                // addParam result
+
+uint8_t dxl_error = 0;                          // Dynamixel error
+uint8_t param_dxl_1_goal_front_position[2] = { DXL_LOBYTE(dxl1_goal_position[1]), DXL_HIBYTE(dxl1_goal_position[1]) };
+uint8_t param_dxl_2_goal_front_position[2] = { DXL_LOBYTE(dxl2_goal_position[1]), DXL_HIBYTE(dxl2_goal_position[1]) };
+uint8_t param_dxl_1_goal_back_position[2] = { DXL_LOBYTE(dxl1_goal_position[0]), DXL_HIBYTE(dxl1_goal_position[0]) };
+uint8_t param_dxl_2_goal_back_position[2] = { DXL_LOBYTE(dxl2_goal_position[0]), DXL_HIBYTE(dxl2_goal_position[0]) };
+uint16_t dxl1_present_position = 0;       // Present position of Dynamixel 1
+uint16_t dxl2_present_position = 0;        // Present position of Dynamixel 2
+//int32_t dxl3_present_position = 0;        // Present position of Dynamixel 3
+int32_t dxl4_present_position = 0;        // Present position of Dynamixel 4
+
+// all functions 
+//
+//
+//
+//
+//
+//
+void write_pos_front(void); //write front position (all motors)
+void write_pos_back(void); //write back position (all motors)
+
+//void write_steer_front(void); //write steering direction (1st motor)
+//void write_steer_back(void); //initialize steering direction (1st motor)
+
+void write_vel_front(void); //write front velocity (all motors)
+void write_vel_back(void); //write back velocity (all motors)
+
+//void write_vel_steer(void); //write front velocity (1st motor)
+
+void en_torq(void); // enable torque
+void dis_torq(void); //disable torque
+void read_pos(void); //read position
+void print_pres_pos(void);
+
+int main(void)
+{
+	// Initiate communication at first.
+	WSADATA wsaData;
+	SOCKET clientSocket;
+	SOCKADDR_IN serverAddress;
+	char received[256], * seg;
+	int recv_arr, ang_deg;
+	double recv_ang, abs_recv_ang;
+	string sent;
+	if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) // Winsock
+		ShowErrorMessage("WSAStartup()");
+	clientSocket = socket(PF_INET, SOCK_STREAM, 0); // TCP
+	if (clientSocket == INVALID_SOCKET)
+		ShowErrorMessage("socket()");
+	memset(&serverAddress, 0, sizeof(serverAddress));
+	serverAddress.sin_family = AF_INET;
+	serverAddress.sin_addr.s_addr = inet_addr("127.0.0.1"); // IP  
+	serverAddress.sin_port = htons(PORT);
+
+	if (connect(clientSocket, (SOCKADDR*)&serverAddress, sizeof(serverAddress)) == SOCKET_ERROR)
+		ShowErrorMessage("connect()");
+	cout << "[Status] connect()\n";
+	send(clientSocket, "r", 1, 0);
+
+	// Open port
+	if (portHandler->openPort())
+	{
+		printf("Succeeded to open the port!\n");
+	}
+	else
+	{
+		printf("Failed to open the port!\n");
+		printf("Press any key to terminate...\n");
+		getch();
+		return 0;
+	}
+
+	// Set port baudrate
+	if (portHandler->setBaudRate(BAUDRATE))
+	{
+		printf("Succeeded to change the baudrate!\n");
+	}
+	else
+	{
+		printf("Failed to change the baudrate!\n");
+		printf("Press any key to terminate...\n");
+		getch();
+		return 0;
+	}
+
+
+	// Enable Torque
+	//
+	//
+	//
+	//
+	en_torq();
+
+	// initialize to reference value(velocity, position)
+	//
+	//
+	//
+	//
+	//
+
+
+	write_vel_back();
+	write_pos_back();;
+
+
+	//repeat while true --> one loop one input from TCP-IP communication
+	//
+	//
+	//
+	//
+	//
+	while (1) {
+
+		printf("waiting for input from python server..\n");
+		int length = recv(clientSocket, received, sizeof(received), 0);
+		if (!length || length >> 6) continue;
+		received[length] = '\0';
+		cout << "Message: " << received << '\n';
+		seg = strtok(received, ",");
+		if (seg == NULL)    continue;
+
+		//Two input: recv_arr, recv_ang
+		//
+		//
+		//
+		//
+		recv_arr = atoi(seg), seg = strtok(NULL, ","); //integer, ETA (arrival time)
+		if (seg == NULL)    continue;
+		recv_ang = atof(seg), seg = strtok(NULL, ","); //double, tangent angle
+		cout << "arrival time: " << recv_arr << " angle: " << recv_ang << endl;
+
+		// ang_deg  == goal_posiion of motor No.12
+		//
+		//
+		//
+		//
+		/*if (recv_ang >= 0)
+		{
+			if (recv_ang < 1)	ang_deg = 1536;
+			else if (recv_ang < 20)	ang_deg = 1024 + floor(atan(recv_ang) * 2048 / PI);
+			else
+			{
+				ang_deg = 2048;
+			}
+		}
+		else
+		{
+			if (recv_ang > -1)	ang_deg = 2560;
+			else if (recv_ang > -20)	ang_deg = 3092 + floor(atan(recv_ang) * 2048 / PI);
+			else
+			{
+				ang_deg = 2048;
+			}
+		}*/
+
+
+		//dxl_1_front_pos = ang_deg;
+
+		int HIT_NOW = 0; // Hit now
+		if (recv_arr > 0) // ETA input came to program
+		{
+			write_vel_front(); //velocity write
+			//Zzzzzzzzzzzzz
+			Sleep(recv_arr);
+			//Zzzzzzzzzzzzz
+			HIT_NOW = 1; //hit now
+		}
+		else {
+			HIT_NOW = 0;
+		}
+
+		// one hit loop
+		//
+		//
+		//
+		//
+		//
+		//
+		//
+		if (HIT_NOW == 1) {
+			//write front position
+			write_pos_front();
+			while (1) {
+				read_pos();
+				if ((abs(dxl1_goal_position[1] - dxl1_present_position) > DXL1_MOVING_STATUS_THRESHOLD) || (abs(dxl4_goal_position[1] - dxl4_present_position) > DXL4_MOVING_STATUS_THRESHOLD))
+				{
+					continue;
+				}
+				else {
+					print_pres_pos();
+					break;
+				}
+			}
+			//write back_position
+			write_vel_back();
+			write_pos_back();
+		}
+		else {
+			continue;
+		}
+	}
+	////////////////////////////////////////////
+	//loop end
+	////////////////////////////////////////////
+
+	dis_torq();
+	// Close port
+	portHandler->closePort();
+
+	// Terminate Communication.
+	closesocket(clientSocket);
+	WSACleanup();
+	system("pause");
+	return 0;
+}
+
+
+void write_pos_front(void) { //all motors
+
+	// Add Dynamixel#1 goal position value to the Syncwrite storage
+	dxl_addparam_result = groupSyncWrite.addParam(DXL1_ID, param_dxl_1_goal_front_position);
+	if (dxl_addparam_result != true)
+	{
+		fprintf(stderr, "[ID:%03d] groupSyncWrite addparam failed", DXL1_ID);
+		return;
+	}
+
+	// Add Dynamixel#2 goal position value to the Syncwrite parameter storage
+	dxl_addparam_result = groupSyncWrite.addParam(DXL2_ID, param_dxl_2_goal_front_position);
+	if (dxl_addparam_result != true)
+	{
+		fprintf(stderr, "[ID:%03d] groupSyncWrite addparam failed", DXL2_ID);
+		return;
+	}
+
+	// Syncwrite goal position
+	dxl_comm_result = groupSyncWrite.txPacket();
+	if (dxl_comm_result != COMM_SUCCESS) printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+
+	// Clear syncwrite parameter storage
+	groupSyncWrite.clearParam();
+
+	// Write Dynamixel#4 goal position
+	dxl_comm_result = packetHandler4->write4ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_GOAL_POSITION, dxl4_goal_position[1], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+}
+
+void write_pos_back(void) { //all motors
+
+	// Add Dynamixel#1 goal position value to the Syncwrite storage
+	dxl_addparam_result = groupSyncWrite.addParam(DXL1_ID, param_dxl_1_goal_back_position);
+	if (dxl_addparam_result != true)
+	{
+		fprintf(stderr, "[ID:%03d] groupSyncWrite addparam failed", DXL1_ID);
+		return;
+	}
+
+	// Add Dynamixel#2 goal position value to the Syncwrite parameter storage
+	dxl_addparam_result = groupSyncWrite.addParam(DXL2_ID, param_dxl_2_goal_back_position);
+	if (dxl_addparam_result != true)
+	{
+		fprintf(stderr, "[ID:%03d] groupSyncWrite addparam failed", DXL2_ID);
+		return;
+	}
+
+	// Syncwrite goal position
+	dxl_comm_result = groupSyncWrite.txPacket();
+	if (dxl_comm_result != COMM_SUCCESS) printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+
+	// Clear syncwrite parameter storage
+	groupSyncWrite.clearParam();
+
+	// Write Dynamixel#4 goal position
+	dxl_comm_result = packetHandler4->write4ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_GOAL_POSITION, dxl4_goal_position[0], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+}
+
+void write_vel_front(void) { //Write velocity for motors (all motors)
+
+	dxl_comm_result = packetHandler1->write2ByteTxRx(portHandler, DXL1_ID, ADDR_MX_MOVING_SPEED, dxl1_vel[1], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+	dxl_comm_result = packetHandler1->write2ByteTxRx(portHandler, DXL2_ID, ADDR_MX_MOVING_SPEED, dxl1_vel[1], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+
+	dxl_comm_result = packetHandler4->write4ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_PROFILE_VELOCITY, dxl4_vel[1], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+}
+
+void write_vel_back(void) { //Write back velocity for motors (all motors)
+
+	dxl_comm_result = packetHandler1->write2ByteTxRx(portHandler, DXL1_ID, ADDR_MX_MOVING_SPEED, dxl1_vel[0], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+	dxl_comm_result = packetHandler1->write2ByteTxRx(portHandler, DXL2_ID, ADDR_MX_MOVING_SPEED, dxl1_vel[0], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+
+	dxl_comm_result = packetHandler4->write4ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_PROFILE_VELOCITY, dxl4_vel[0], &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+}
+
+
+
+void en_torq(void) { // Enable Torque 
+	// Enable Dynamixel#1 torque
+	dxl_comm_result = packetHandler1->write1ByteTxRx(portHandler, DXL1_ID, ADDR_MX_TORQUE_ENABLE, TORQUE_ENABLE, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+	else {
+		printf("Dynamixel#%d has been successfully connected \n", DXL1_ID);
+	}
+
+	// Enable Dynamixel#2 torque
+	dxl_comm_result = packetHandler1->write1ByteTxRx(portHandler, DXL2_ID, ADDR_MX_TORQUE_ENABLE, TORQUE_ENABLE, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+	else {
+		printf("Dynamixel#%d has been successfully connected \n", DXL2_ID);
+	}
+
+	// Enable Dynamixel#4 torque
+	dxl_comm_result = packetHandler4->write1ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_TORQUE_ENABLE, TORQUE_ENABLE, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+	else {
+		printf("Dynamixel#%d has been successfully connected \n", DXL4_ID);
+	}
+}
+void dis_torq(void) { // Disable Dynamixel Torque 
+	// Disable Dynamixel#1 Torque
+	dxl_comm_result = packetHandler1->write1ByteTxRx(portHandler, DXL1_ID, ADDR_MX_TORQUE_ENABLE, TORQUE_DISABLE, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS)
+	{
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0)
+	{
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+	// Disable Dynamixel#2 Torque
+	dxl_comm_result = packetHandler1->write1ByteTxRx(portHandler, DXL2_ID, ADDR_MX_TORQUE_ENABLE, TORQUE_DISABLE, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS)
+	{
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0)
+	{
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+	// Disable Dynamixel#4 Torque
+	dxl_comm_result = packetHandler4->write1ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_TORQUE_ENABLE, TORQUE_DISABLE, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS)
+	{
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0)
+	{
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+}
+
+
+void read_pos(void) { //all motors
+	// Read Dynamixel#1 present position
+	dxl_comm_result = packetHandler1->read2ByteTxRx(portHandler, DXL1_ID, ADDR_MX_PRESENT_POSITION, &dxl1_present_position, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+	// Read Dynamixel#2 present position
+	dxl_comm_result = packetHandler1->read2ByteTxRx(portHandler, DXL2_ID, ADDR_MX_PRESENT_POSITION, &dxl2_present_position, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler1->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler1->getRxPacketError(dxl_error));
+	}
+
+	// Read Dynamixel#4 present position
+	dxl_comm_result = packetHandler4->read4ByteTxRx(portHandler, DXL4_ID, ADDR_XM430_PRESENT_POSITION, (uint32_t*)&dxl4_present_position, &dxl_error);
+	if (dxl_comm_result != COMM_SUCCESS) {
+		printf("%s\n", packetHandler4->getTxRxResult(dxl_comm_result));
+	}
+	else if (dxl_error != 0) {
+		printf("%s\n", packetHandler4->getRxPacketError(dxl_error));
+	}
+
+}
+
+void print_pres_pos(void) { //three motors
+	printf("[#%d] Goal: %03d Pres: %03d  [#%d] Goal: %03d Pres: %03d  [#%d] Goal: %03d Pres: %03d\n",
+		1, dxl1_goal_position[1], dxl1_present_position, 2, dxl2_goal_position[1], dxl2_present_position, 4, dxl4_goal_position[1], dxl4_present_position);
+}

@@ -228,8 +228,14 @@ while True:
         #     else:
         #         HIT_DELAY = 3
 
-
-            HIT_DELAY = 130
+            if realcenter[1] < 300:
+                HIT_DELAY = 150
+            elif realcenter[1] < 350:  #360
+                HIT_DELAY = 125          #135
+            elif realcenter[1] < 450:
+                HIT_DELAY = 120
+            else:
+                HIT_DELAY = 20
 
             # 로봇팔 송신 쓰레드
             arm_tr = threading.Thread(
